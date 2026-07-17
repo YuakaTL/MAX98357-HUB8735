@@ -2,7 +2,7 @@
 
 **English** | [繁體中文](README.zh-TW.md)
 
-An Arduino library that plays WAV files from the SD card through a **MAX98357 I2S class-D amplifier** on the **HUB8735 Ultra** (or any RTL8735B / AmebaPro2 board).
+An Arduino library that plays **WAV and MP3** audio — from the SD card or **streamed over the network** (e.g. a TTS API response) — through a **MAX98357 I2S class-D amplifier** on the **HUB8735 Ultra** (or any RTL8735B / AmebaPro2 board).
 
 ## Why this library exists
 
@@ -61,6 +61,41 @@ void loop() {}
 
 See [examples/PlayWav](examples/PlayWav/PlayWav.ino) for the full example.
 
+### Playing MP3
+
+MP3 decoding uses the Helix decoder already bundled with the AmebaPro2 package (`libhmp3.a`) — no extra install:
+
+```cpp
+amp.playMp3(fs, "test001.mp3");
+```
+
+### Streaming from the network (TTS)
+
+Hand any Arduino `Stream` positioned at the audio data to the library — e.g. a `WiFiClient` right after the HTTP response headers. Audio plays **while it downloads**:
+
+```cpp
+WiFiClient client;
+client.connect(server, 80);
+client.println("GET /tts?text=hello HTTP/1.1");
+client.println("Host: " + String(server));
+client.println("Connection: close");
+client.println();
+skipHttpHeaders(client);              // read until the blank line
+
+amp.playWavStream(client);            // WAV response
+// amp.playMp3Stream(client);         // or MP3 response
+```
+
+Full example (including the header-skipping helper): [examples/PlayHttpTTS](examples/PlayHttpTTS/PlayHttpTTS.ino). WAV responses with unknown data size (streaming encoders write 0 or 0xFFFFFFFF) play until the connection ends. Chunked transfer encoding is not parsed — request a plain response.
+
+If your TTS returns **raw PCM**, use the push API directly:
+
+```cpp
+amp.beginPCM(24000, 1);               // sample rate, channels
+amp.writePCM(samples, sampleCount);   // call repeatedly; blocks when buffer is full
+amp.endPCM();
+```
+
 ### API
 
 | Function | Description |
@@ -71,17 +106,25 @@ See [examples/PlayWav](examples/PlayWav/PlayWav.ino) for the full example.
 | `void setShutdownPin(int pin)` | Optional: GPIO wired to SD_MODE, driven LOW between playbacks for hardware shutdown (fixes idle heating on some modules). Note: 3.3V on SD_MODE selects left-channel-only mode |
 | `bool playWav(AmebaFatFS &fs, const char *filename)` | Play a WAV from the SD card root (blocks until finished) |
 | `bool playWav(File &f)` | Play from an already-opened file |
+| `bool playWavStream(Stream &s)` | Play WAV from a forward-only stream (HTTP body, etc.) |
+| `bool playMp3(AmebaFatFS &fs, const char *filename)` | Play an MP3 from the SD card root |
+| `bool playMp3(File &f)` | Play MP3 from an already-opened file |
+| `bool playMp3Stream(Stream &s)` | Play MP3 from a stream |
+| `bool beginPCM(uint32_t rate, uint16_t ch)` | Start raw PCM output (16-bit interleaved) |
+| `bool writePCM(const int16_t *data, size_t n)` | Push n int16 samples; blocks while the buffer is full |
+| `void endPCM()` | Flush, drain and stop the PCM output |
 | `const char *lastError()` | Reason for the most recent failure |
 
-### Supported audio format
+### Supported audio formats
 
-RIFF **PCM 16-bit** WAV, mono or stereo (mono is duplicated to both channels), sample rates:
-8k / 11.025k / 12k / 16k / 22.05k / 24k / 32k / 44.1k / 48k / 88.2k / 96k Hz.
+- **WAV**: RIFF PCM **16-bit**, mono or stereo (mono is duplicated to both channels)
+- **MP3**: anything the Helix decoder handles (MPEG-1/2 Layer III, mono/stereo)
+- Sample rates: 8k / 11.025k / 12k / 16k / 22.05k / 24k / 32k / 44.1k / 48k / 88.2k / 96k Hz
 
-Convert MP3 or other formats first:
+To convert other formats:
 
 ```bash
-ffmpeg -i input.mp3 -ar 16000 -ac 1 -sample_fmt s16 test001.wav
+ffmpeg -i input.m4a -ar 16000 -ac 1 -sample_fmt s16 test001.wav
 ```
 
 ## Hardware tips

@@ -2,7 +2,7 @@
 
 [English](README.md) | **繁體中文**
 
-用 HUB8735 Ultra(或其他 RTL8735B / AmebaPro2 板)直接驅動 MAX98357 I2S 功率放大器、播放 SD 卡上的 WAV 音檔的 Arduino Library。
+用 HUB8735 Ultra(或其他 RTL8735B / AmebaPro2 板)直接驅動 MAX98357 I2S 功率放大器的 Arduino Library — 支援 **WAV 與 MP3**,來源可以是 SD 卡或**網路串流**(例如 TTS API 的回應,邊下載邊播)。
 
 ## 為什麼需要這個 Library
 
@@ -61,6 +61,41 @@ void loop() {}
 
 完整範例見 [examples/PlayWav](examples/PlayWav/PlayWav.ino)。
 
+### 播放 MP3
+
+MP3 解碼使用 AmebaPro2 套件內建的 Helix 解碼器(`libhmp3.a`),不需額外安裝:
+
+```cpp
+amp.playMp3(fs, "test001.mp3");
+```
+
+### 網路串流播放(TTS)
+
+把任何已定位到音訊資料的 Arduino `Stream` 交給 library — 例如已讀完 HTTP 回應標頭的 `WiFiClient`,**邊下載邊播放**:
+
+```cpp
+WiFiClient client;
+client.connect(server, 80);
+client.println("GET /tts?text=hello HTTP/1.1");
+client.println("Host: " + String(server));
+client.println("Connection: close");
+client.println();
+skipHttpHeaders(client);              // 讀到空行為止
+
+amp.playWavStream(client);            // WAV 回應
+// amp.playMp3Stream(client);         // 或 MP3 回應
+```
+
+完整範例(含跳過 HTTP 標頭的 helper):[examples/PlayHttpTTS](examples/PlayHttpTTS/PlayHttpTTS.ino)。串流 WAV 若 data 長度未知(串流編碼器常寫 0 或 0xFFFFFFFF)會播放到連線結束為止;不支援 chunked transfer encoding,請讓伺服器回傳一般回應。
+
+TTS 若回傳**原始 PCM**,直接用推送 API:
+
+```cpp
+amp.beginPCM(24000, 1);               // 取樣率、聲道數
+amp.writePCM(samples, sampleCount);   // 重複呼叫;緩衝滿時會自動等待
+amp.endPCM();
+```
+
 ### API
 
 | 函式 | 說明 |
@@ -71,17 +106,25 @@ void loop() {}
 | `void setShutdownPin(int pin)` | 選用:指定接到 SD_MODE 的 GPIO,不播放時拉低硬體關斷(解決部分模組 idle 發熱問題)。注意 3.3V 拉高後為「僅左聲道」模式 |
 | `bool playWav(AmebaFatFS &fs, const char *filename)` | 播放 SD 卡根目錄的 WAV(阻塞至播完) |
 | `bool playWav(File &f)` | 播放已開啟的檔案 |
+| `bool playWavStream(Stream &s)` | 從單向串流播放 WAV(HTTP body 等) |
+| `bool playMp3(AmebaFatFS &fs, const char *filename)` | 播放 SD 卡根目錄的 MP3 |
+| `bool playMp3(File &f)` | 播放已開啟的 MP3 檔案 |
+| `bool playMp3Stream(Stream &s)` | 從串流播放 MP3 |
+| `bool beginPCM(uint32_t rate, uint16_t ch)` | 開始原始 PCM 輸出(16-bit 交錯) |
+| `bool writePCM(const int16_t *data, size_t n)` | 推送 n 個 int16 樣本;緩衝滿時阻塞等待 |
+| `void endPCM()` | 沖空緩衝並停止 PCM 輸出 |
 | `const char *lastError()` | 最近一次失敗的原因 |
 
 ### 支援的音檔格式
 
-RIFF **PCM 16-bit** WAV,單聲道或立體聲(單聲道自動複製到左右聲道),取樣率:
-8k / 11.025k / 12k / 16k / 22.05k / 24k / 32k / 44.1k / 48k / 88.2k / 96k Hz。
+- **WAV**:RIFF PCM **16-bit**,單聲道或立體聲(單聲道自動複製到左右聲道)
+- **MP3**:Helix 解碼器支援的都可以(MPEG-1/2 Layer III,單/立體聲)
+- 取樣率:8k / 11.025k / 12k / 16k / 22.05k / 24k / 32k / 44.1k / 48k / 88.2k / 96k Hz
 
-MP3 或其他格式請先轉檔:
+其他格式轉檔:
 
 ```bash
-ffmpeg -i input.mp3 -ar 16000 -ac 1 -sample_fmt s16 test001.wav
+ffmpeg -i input.m4a -ar 16000 -ac 1 -sample_fmt s16 test001.wav
 ```
 
 ## 硬體建議
